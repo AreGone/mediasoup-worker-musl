@@ -1,0 +1,142 @@
+name: build
+
+# Builds the mediasoup C++ worker against musl (Alpine) and publishes it as a
+# GitHub release whose tag is the exact mediasoup version, with asset names
+# identical to the upstream prebuilds. mediasoup's postinstall then downloads
+# it instead of compiling, when the consumer sets
+#   MEDIASOUP_WORKER_PREBUILT_DOWNLOAD_BASE_URL=https://github.com/<owner>/<repo>/releases/download
+# See README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: mediasoup version to build (empty = latest on npm)
+        required: false
+        default: ""
+      force:
+        description: rebuild and replace the release if it already exists
+        type: boolean
+        default: false
+  schedule:
+    # Daily: pick up new mediasoup releases automatically.
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.version || 'latest' }}
+  cancel-in-progress: false
+
+env:
+  # Build and verify inside the same Alpine/node image the consumers use.
+  # Keep in sync with the consumer Dockerfiles when they move.
+  NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+
+jobs:
+  resolve:
+    name: resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            version=$(npm view mediasoup version)
+          fi
+          # Only accept a version that exists on npm (also rejects odd input).
+          npm view "mediasoup@$version" version >/dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE" != "true" ] && gh release view "$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $version already exists; nothing to do"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build (${{ matrix.arch }})
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: compile mediasoup-worker ${{ env.VERSION }} on musl
+        run: scripts/build.sh "$VERSION" "$PWD/out"
+      - name: verify the binary in a clean Alpine container
+        run: scripts/verify.sh "$PWD/out"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worker-${{ matrix.arch }}
+          path: out/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      FORCE: ${{ inputs.force }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: worker-*
+          merge-multiple: true
+          path: dist
+      - name: checksums and release notes
+        run: |
+          cd dist
+          sha256sum ./*.tgz | sed 's#\./##' > SHA256SUMS
+          cat SHA256SUMS
+          integrity=$(npm view "mediasoup@$VERSION" dist.integrity)
+          {
+            echo "mediasoup-worker **$VERSION** compiled against musl (Alpine) from the npm package \`mediasoup@$VERSION\` (\`$integrity\`)."
+            echo
+            echo "Use it from an Alpine-based Node image:"
+            echo
+            echo '```'
+            echo "MEDIASOUP_WORKER_PREBUILT_DOWNLOAD_BASE_URL=https://github.com/$GITHUB_REPOSITORY/releases/download"
+            echo '```'
+            echo
+            echo "Assets follow upstream naming (\`mediasoup-worker-<version>-linux-<arch>-kernel<N>.tgz\`); the kernel5 files are copies of the kernel6 build (io_uring is detected at run time)."
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } > ../notes.md
+      - name: publish
+        run: |
+          if gh release view "$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$FORCE" = "true" ]; then
+              gh release delete "$VERSION" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            else
+              echo "release $VERSION appeared meanwhile; not replacing it" >&2
+              exit 1
+            fi
+          fi
+          gh release create "$VERSION" dist/* -R "$GITHUB_REPOSITORY" \
+            --title "mediasoup-worker $VERSION (musl)" --notes-file notes.md
