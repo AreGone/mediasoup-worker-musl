@@ -14,7 +14,7 @@ Point mediasoup's postinstall at this repository before `npm ci` / `npm install`
 (for example in a Dockerfile based on `node:<version>-alpine`):
 
 ```dockerfile
-ENV MEDIASOUP_WORKER_PREBUILT_DOWNLOAD_BASE_URL=https://github.com/Netix-Offix/mediasoup-worker-musl/releases/download
+ENV MEDIASOUP_WORKER_PREBUILT_DOWNLOAD_BASE_URL=https://github.com/AreGone/mediasoup-worker-musl/releases/download
 RUN npm ci --foreground-scripts
 ```
 
@@ -32,10 +32,13 @@ One release per mediasoup version, tagged with the exact npm version
 
 | asset | built on |
 | --- | --- |
-| `mediasoup-worker-<v>-linux-x64-kernel6.tgz` | `ubuntu-24.04`, inside `node:22-alpine` |
-| `mediasoup-worker-<v>-linux-arm64-kernel6.tgz` | `ubuntu-24.04-arm`, inside `node:22-alpine` |
-| `...-kernel5.tgz` | copies of the kernel6 files (mediasoup names the tarball after the kernel major version of the installing host; io_uring is probed at run time) |
+| `mediasoup-worker-<v>-linux-x64-kernel{5,6,7}.tgz` | `ubuntu-24.04`, inside `node:22-alpine` |
+| `mediasoup-worker-<v>-linux-arm64-kernel{5,6,7}.tgz` | `ubuntu-24.04-arm`, inside `node:22-alpine` |
 | `SHA256SUMS` | checksums of the above |
+
+The three kernel variants of an architecture are the same file: mediasoup names
+the tarball after the kernel major version of the host running `npm install`,
+and the worker probes io_uring support at run time.
 
 The release notes carry the npm `dist.integrity` of the `mediasoup@<v>` package
 the worker was compiled from.

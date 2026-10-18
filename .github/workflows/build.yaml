@@ -122,7 +122,7 @@ jobs:
             echo "MEDIASOUP_WORKER_PREBUILT_DOWNLOAD_BASE_URL=https://github.com/$GITHUB_REPOSITORY/releases/download"
             echo '```'
             echo
-            echo "Assets follow upstream naming (\`mediasoup-worker-<version>-linux-<arch>-kernel<N>.tgz\`); the kernel5 files are copies of the kernel6 build (io_uring is detected at run time)."
+            echo "Assets follow upstream naming (\`mediasoup-worker-<version>-linux-<arch>-kernel<N>.tgz\`); the kernel 5/6/7 files of an architecture are the same build (io_uring is probed at run time)."
             echo
             echo '```'
             cat SHA256SUMS

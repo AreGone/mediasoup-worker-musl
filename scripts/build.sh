@@ -27,10 +27,13 @@ docker run --rm -v "$out:/out" -e VERSION="$version" "$NODE_IMAGE" sh -euxc '
 '
 
 # mediasoup names the tarball after the kernel major version of the host that
-# runs npm install. Publish the same build under the kernel5 name too so hosts
-# on a 5.x kernel (older LTS distributions) get it as well; io_uring support is
-# probed at run time by the worker.
-for f in "$out"/*-kernel6.tgz; do
-  cp "$f" "${f%-kernel6.tgz}-kernel5.tgz"
+# runs npm install (GitHub runners: 6; Docker Desktop: 7; older LTS servers: 5),
+# so publish the same build under every name a consumer may request. The
+# worker probes io_uring support at run time, the build itself is identical.
+for f in "$out"/*-kernel*.tgz; do
+  base=${f%-kernel*.tgz}
+  for k in 5 6 7; do
+    [ -e "$base-kernel$k.tgz" ] || cp "$f" "$base-kernel$k.tgz"
+  done
 done
 ls -la "$out"
